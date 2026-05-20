@@ -160,9 +160,7 @@ def render(camera: Camera, model: GSModel, white_bkgd=True):
         [0,              0,              1    ],
     ], device=device, dtype=torch.float32).unsqueeze(0)           # [1, 3, 3]
 
-    bg = torch.ones(1, 3, device=device) if white_bkgd else torch.zeros(1, 3, device=device)
-
-    renders, _, _ = rasterization(
+    renders, alphas, _ = rasterization(
         means=model.get_xyz,
         quats=model.get_rotation,
         scales=model.get_scaling,
@@ -173,6 +171,8 @@ def render(camera: Camera, model: GSModel, white_bkgd=True):
         width=W,
         height=H,
         sh_degree=model.sh_deg,
-        backgrounds=bg,
     )
-    return renders[0]                                              # [H, W, 3]
+    img = renders[0]                                              # [H, W, 3]
+    if white_bkgd:
+        img = img + (1.0 - alphas[0])                            # alphas [H, W, 1]
+    return img
