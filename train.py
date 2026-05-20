@@ -134,7 +134,7 @@ def reset_opacity(model, optimizer):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data",        default="lego")
-    parser.add_argument("--scene_type", default="blender", choices=["blender", "mip360"])
+    parser.add_argument("--scene_type", default="blender", choices=["blender", "mip360", "llff"])
     parser.add_argument("--steps",       type=int,   default=30_000)
     parser.add_argument("--n_gaussians", type=int,   default=50_000)
     parser.add_argument("--sh_degree",   type=int,   default=3)
@@ -155,6 +155,9 @@ def main():
     if args.scene_type == "mip360":
         from data import load_mip360
         data = load_mip360(args.data, split="train", resize_factor=args.resize)
+    elif args.scene_type == "llff":
+        from data import load_llff
+        data = load_llff(args.data, split="train", resize_factor=args.resize)
     else:
         data = load_nerf_synthetic(args.data, split="train", resize_factor=args.resize)
     data   = {k: v.to(device) for k, v in data.items()}

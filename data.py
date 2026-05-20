@@ -7,6 +7,78 @@ import torch
 import imageio.v2 as imageio
 
 
+def load_llff(folder, split="train", resize_factor=1.0, hold=8):
+    """
+    Load LLFF format (poses_bounds.npy + images/).
+    Used by Mip-NeRF 360 raw captures, LLFF dataset, etc.
+    hold: use every Nth image for test, rest for train.
+    """
+    import glob
+
+    poses_arr = np.load(os.path.join(folder, 'poses_bounds.npy'))  # [N, 17]
+    poses_hwf  = poses_arr[:, :15].reshape(-1, 3, 5)               # [N, 3, 5]
+    H, W, focal = poses_hwf[0, :, 4]
+    H, W = int(H), int(W)
+    poses = poses_hwf[:, :, :4]                                     # [N, 3, 4]
+
+    # pick pre-downsampled image dir closest to resize_factor
+    for factor, subdir in [(4, 'images_4'), (2, 'images_2'), (1, 'images')]:
+        d = os.path.join(folder, subdir)
+        if resize_factor <= 1.0 / factor and os.path.exists(d):
+            img_dir   = d
+            scale     = 1.0 / factor
+            resize_factor = 1.0   # already at target resolution
+            break
+    else:
+        img_dir, scale = os.path.join(folder, 'images'), resize_factor
+        resize_factor  = 1.0
+
+    focal_s = focal * scale
+    H_s     = int(round(H * scale))
+    W_s     = int(round(W * scale))
+
+    img_files = sorted(glob.glob(os.path.join(img_dir, '*.jpg')) +
+                       glob.glob(os.path.join(img_dir, '*.png')))
+    indices   = np.arange(len(img_files))
+    indices   = indices[indices % hold != 0] if split == 'train' else indices[indices % hold == 0]
+
+    rgbs, cameras = [], []
+    for i in indices:
+        img = imageio.imread(img_files[i]).astype(np.float32) / 255.0
+        img = img[..., :3]
+        if resize_factor != 1.0:
+            import torch.nn.functional as F
+            t   = torch.from_numpy(img).permute(2, 0, 1).unsqueeze(0)
+            t   = F.interpolate(t, scale_factor=resize_factor, mode='bilinear', align_corners=False)
+            img = t.squeeze(0).permute(1, 2, 0).numpy()
+
+        # LLFF cols: [down, right, backward] → OpenCV: [right, down, forward]
+        pose = poses[i]                        # [3, 4]
+        c2w  = np.eye(4, dtype=np.float32)
+        c2w[:3, 0] =  pose[:, 1]              # right
+        c2w[:3, 1] =  pose[:, 0]              # down
+        c2w[:3, 2] = -pose[:, 2]              # forward = -backward
+        c2w[:3, 3] =  pose[:, 3]              # position
+
+        H_i, W_i = img.shape[:2]
+        f_i      = focal_s * (W_i / W_s)      # adjust if image size differs
+        intrinsic = np.eye(4, dtype=np.float32)
+        intrinsic[0, 0] = f_i
+        intrinsic[1, 1] = f_i
+        intrinsic[0, 2] = W_i / 2.0
+        intrinsic[1, 2] = H_i / 2.0
+
+        cam = np.concatenate([[float(H_i), float(W_i)], intrinsic.flatten(), c2w.flatten()])
+        rgbs.append(img)
+        cameras.append(cam.astype(np.float32))
+
+    return {
+        "rgb":    torch.from_numpy(np.stack(rgbs,     0)),
+        "alpha":  torch.ones(len(rgbs), *rgbs[0].shape[:2]),
+        "camera": torch.from_numpy(np.stack(cameras,  0)),
+    }
+
+
 def load_mip360(folder, split="train", resize_factor=1.0):
     """
     Load a Mip-NeRF 360 dataset split (real captures, COLMAP convention, no alpha).
