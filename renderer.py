@@ -147,36 +147,32 @@ def rasterize(means2D, cov2d, colors, opacity, depths, W, H, white_bkgd=True):
 
 
 def render(camera: Camera, model: GSModel, white_bkgd=True):
-    means3D   = model.get_xyz
-    shs       = model.get_features
-    scales    = model.get_scaling
-    rotations = model.get_rotation
-    opacity   = model.get_opacity
+    from gsplat import rasterization
 
-    means_ndc, means_view, in_mask = projection_ndc(
-        means3D, camera.world_view_transform, camera.projection_matrix)
+    device = model.get_xyz.device
+    W, H   = camera.image_width, camera.image_height
 
-    # apply frustum mask to everything from here on
-    means3D   = means3D[in_mask]
-    means_ndc = means_ndc[in_mask]
-    depths    = means_view[in_mask, 2]
-    shs       = shs[in_mask]
-    scales    = scales[in_mask]
-    rotations = rotations[in_mask]
-    opacity   = opacity[in_mask]
+    # gsplat expects a standard w2c matrix (not transposed)
+    viewmat = camera.world_view_transform.T.unsqueeze(0)          # [1, 4, 4]
+    K = torch.tensor([
+        [camera.focal_x, 0,              W / 2],
+        [0,              camera.focal_y, H / 2],
+        [0,              0,              1    ],
+    ], device=device, dtype=torch.float32).unsqueeze(0)           # [1, 3, 3]
 
-    colors = get_colors(means3D, shs, model.sh_deg, camera)
+    bg = torch.ones(1, 3, device=device) if white_bkgd else torch.zeros(1, 3, device=device)
 
-    cov3d  = build_cov3d(scales, rotations)
-    cov2d  = build_cov2d(means3D, cov3d,
-                         camera.world_view_transform,
-                         camera.focal_x, camera.focal_y,
-                         camera.FoVx, camera.FoVy)
-
-    W, H = camera.image_width, camera.image_height
-    means2D = torch.stack([
-        (means_ndc[:, 0] + 1) * W * 0.5 - 0.5,
-        (means_ndc[:, 1] + 1) * H * 0.5 - 0.5,
-    ], dim=-1)
-
-    return rasterize(means2D, cov2d, colors, opacity, depths, W, H, white_bkgd)
+    renders, _, _ = rasterization(
+        means=model.get_xyz,
+        quats=model.get_rotation,
+        scales=model.get_scaling,
+        opacities=model.get_opacity.squeeze(-1),
+        colors=model.get_features,     # [N, K, 3] SH coefficients
+        viewmats=viewmat,
+        Ks=K,
+        width=W,
+        height=H,
+        sh_degree=model.sh_deg,
+        backgrounds=bg,
+    )
+    return renders[0]                                              # [H, W, 3]
