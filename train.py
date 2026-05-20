@@ -144,6 +144,8 @@ def main():
     parser.add_argument("--densify_grad_thresh", type=float, default=2e-4)
     parser.add_argument("--densify_until",       type=int,   default=15_000)
     parser.add_argument("--scene_extent",        type=float, default=2.0)
+    parser.add_argument("--colmap",              default=None,
+                        help="path to COLMAP sparse dir; uses init_from_colmap instead of random")
     parser.add_argument("--out",                 default=None)
     args = parser.parse_args()
     if args.out is None:
@@ -164,8 +166,11 @@ def main():
     data   = {k: v.to(device) for k, v in data.items()}
     N_cams = len(data["rgb"])
 
-    model = GSModel(sh_deg=args.sh_degree)  # allocate full SH capacity
-    model.init_from_random(args.n_gaussians, device=device)
+    model = GSModel(sh_deg=args.sh_degree)
+    if args.colmap:
+        model.init_from_colmap(args.colmap, device=device)
+    else:
+        model.init_from_random(args.n_gaussians, device=device)
     model.sh_deg = 0                        # start evaluating at degree 0
     opt   = make_optimizer(model)
 

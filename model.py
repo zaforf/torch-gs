@@ -46,6 +46,37 @@ class GSModel(nn.Module):
         self._rotation     = nn.Parameter(rotation)
         self._opacity      = nn.Parameter(opacity)
 
+    def init_from_colmap(self, sparse_dir, device="cuda"):
+        from colmap_utils import read_colmap_points3d
+        from sh_utils import RGB2SH
+        from scipy.spatial import KDTree
+
+        xyzs, rgbs = read_colmap_points3d(sparse_dir)
+        n = len(xyzs)
+
+        xyz     = torch.from_numpy(xyzs).to(device)
+        rgb_01  = torch.from_numpy(rgbs.astype(np.float32) / 255.0).to(device)
+
+        K             = (self.sh_deg + 1) ** 2
+        features_dc   = RGB2SH(rgb_01).unsqueeze(1)            # [N, 1, 3]
+        features_rest = torch.zeros(n, K - 1, 3, device=device)
+
+        # scale from mean distance to 3 nearest neighbours
+        tree     = KDTree(xyzs)
+        dists, _ = tree.query(xyzs, k=4)                       # k=4: self + 3
+        nn_dist  = torch.from_numpy(dists[:, 1:].mean(axis=1).astype(np.float32)).to(device)
+        scaling  = torch.log(nn_dist.clamp(min=1e-7)).unsqueeze(1).expand(-1, 3).clone()
+
+        rotation = torch.zeros(n, 4, device=device);  rotation[:, 0] = 1.0
+        opacity  = inverse_sigmoid(torch.full((n, 1), 0.1, device=device))
+
+        self._xyz           = nn.Parameter(xyz)
+        self._features_dc   = nn.Parameter(features_dc)
+        self._features_rest = nn.Parameter(features_rest)
+        self._scaling       = nn.Parameter(scaling)
+        self._rotation      = nn.Parameter(rotation)
+        self._opacity       = nn.Parameter(opacity)
+
     # --- activations applied on the way out ---
 
     @property
